@@ -5,6 +5,8 @@ gc.enable()
 import time
 import logging
 import pickle
+import numpy as np
+import random
 from transformers.optimization import Adafactor
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 from torch.cuda.amp import autocast as autocast
@@ -14,6 +16,7 @@ from torch.utils.data import (
     SequentialSampler, RandomSampler
 )
 
+from tqdm import tqdm
 from fairscale.optim.oss import OSS
 from fairscale.nn.data_parallel import ShardedDataParallel as ShardedDDP
 from fairscale.optim.grad_scaler import ShardedGradScaler
@@ -23,7 +26,11 @@ from utils import *
 
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt = '%m/%d/%Y %H:%M:%S',
-                    level = logging.INFO)
+                    level = logging.INFO,
+                    handlers=[
+                        logging.FileHandler("log/short_random.log"),
+                        logging.StreamHandler()
+                    ])
 logger = logging.getLogger(__name__)
 
 def get_dataloader(num_workers,dataset, batch_size, max_len, pad_id, sampler):
@@ -136,7 +143,8 @@ def train(args, model, train_dataset,valid_dataset, onerun):
 
         logger.info("finish one epoch")
         if args.local_rank in [0, -1]:
-            if i >= 256:
+            # if i >= 256:
+            if i >= 5:
                 dooneeval(model,valid_dataloader,args,result_dict,optimizer,scaler,i,onerun)
                 model.train()
 
@@ -160,7 +168,6 @@ def dooneeval(modeltoeval,valid_dataloader,args,result_dict,optimizer,scaler,i,o
     with torch.no_grad():
         logger.info(len(valid_dataloader))
         for step, batch in enumerate(valid_dataloader):
-            logger.info(step)
             inputs = {"input_ids": batch[0].to(args.device), "attention_mask": batch[1].to(args.device),
                       "target_ids": batch[2].to(args.device), "target_mask": batch[3].to(args.device)}
             if scaler is not None:
@@ -221,7 +228,7 @@ def test(args, test_dataset,onerun):
     correctnum = 0
 
     with torch.no_grad():
-        for step, batch in enumerate(test_dataloader):
+        for step, batch in enumerate(tqdm(test_dataloader)):
             inputs = {"input_ids": batch[0].to(args.device), "attention_mask": batch[1].to(args.device),
                       "target_ids": batch[2].to(args.device), "target_mask": batch[3].to(args.device)}
             if scaler is not None:
@@ -229,7 +236,7 @@ def test(args, test_dataset,onerun):
                     sen,target,preds = model._generative_step(inputs)
                     thisbatchnum = len(sen)
                     for k in range(thisbatchnum):
-                        print(target[k] + "\t" + preds[k])
+                        # print(target[k] + "\t" + preds[k])
                         allnum += 1
                         if target[k] == preds[k]:
                             correctnum += 1
@@ -237,7 +244,7 @@ def test(args, test_dataset,onerun):
                 sen, target, preds = model._generative_step(inputs)
                 thisbatchnum = len(sen)
                 for k in range(thisbatchnum):
-                    print(target[k] + "\t" + preds[k])
+                    # print(target[k] + "\t" + preds[k])
                     allnum += 1
                     if target[k] == preds[k]:
                         correctnum += 1
@@ -280,7 +287,7 @@ if __name__ == "__main__":
     parser.add_argument("--tosavepath", dest="tosavepath", type=str,
                         default="t5_classify_ckpt", help="ckpt dir to save")
     parser.add_argument("--seed", dest="seed", type=int,
-                        default=42, help="seed for network")
+                        default=0, help="seed for network")
 
 
     parser.add_argument("--model", dest="model", type=str,
@@ -348,38 +355,101 @@ if __name__ == "__main__":
             f.write(str(args) + "\n")
             f.write("----------------------------------------------------------------------------\n")
     runtimes = 3
-    alltaskfold = ["ag_news_csv", "amazon_review_full_csv", "dbpedia_csv", "yahoo_answers_csv"]
-    alltaskname = ["ag news", "amazon review", "dbpedia", "yahoo answers"]
-    allgentasktoken = ["classifyagnews", "classifyamazon", "classifydbpedia", "classifyyahoo"]
+    
+    # add seq type: short else long
+    alltaskfold = ["ag_news_csv", "amazon_review_full_csv", "dbpedia_csv", "yahoo_answers_csv",
+                   "boolq_csv", "cb_csv", "copa_csv", "imdb_csv", "mnli_csv", "multirc_csv",
+                   "qqp_csv", "rte_csv", "sst2_csv", "wic_csv", "yelp_review_full_csv"]
+    
+    alltaskname = ["ag news", "amazon review", "dbpedia", "yahoo answers", 
+                   "boolq", "cb", "copa", "imdb", "mnli", "multirc",
+                   "qqp", "rte", "sst2", "wic", "yelp"]
+    
+    allgentasktoken = ["classifyagnews", "classifyamazon", "classifydbpedia", "classifyyahoo",
+                       "classifyboolq", "classifycb", "classifycopa", "classifyimdb", "classifymnli", "classifymultirc",
+                       "classifiyqqp", "classifyrte", "classifysst2", "classifywic", "classiflyyelp"]
+
+    # create mapping from name to tokens
+    namemap = {}
+    for name, fold, token in zip(alltaskname, alltaskfold, allgentasktoken):
+        namemap[name] = {"fold": fold, "token": token}
+    
+    # task_orders = [["ag news", "amazon review", "dbpedia", "yahoo answers"]]
+    # task_orders = [["boolq", "imdb", "rte", "sst2", "dbpedia", "cb", "copa", "amazon review", 
+    #                 "wic", "yelp", "yahoo answers", "qqp", "ag news", "multirc", "mnli"]]
+
+    task_orders = [
+        ["dbpedia", "yahoo answers", "amazon review", "ag news"],
+        ["amazon review", "yahoo answers", "dbpedia", "ag news"],
+        ["yahoo answers", "amazon review", "dbpedia", "ag news"],
+        ["ag news", "amazon review", "dbpedia", "yahoo answers"],
+        ["yahoo answers", "ag news", "dbpedia", "amazon review"]
+    ]
+
     labellist = {"ag news": ["world", "sports", "business", "science"],
-                 "yahoo answers": ["society and culture", "science", "health", "education and reference",
+                "yahoo answers": ["society and culture", "science", "health", "education and reference",
                                    "computers and internet", "sports", "business", "entertainment and Music",
                                    "family and relationships", "politics and government"],
-                 "dbpedia": ["company", "educationalinstitution", "artist", "athlete", "officeholder",
+                "dbpedia": ["company", "educationalinstitution", "artist", "athlete", "officeholder",
                              "meanoftransportation", "building", "naturalplace", "village", "animal",
                              "plant", "album", "film", "writtenwork"],
-                 "amazon review": ["terrible", "bad", "middle", "good", "wonderful"]}
+                "amazon review": ["terrible", "bad", "middle", "good", "wonderful"],
+                "mnli": ["entailment", "neutral", "contradiction"],
+                "qqp": ["not_duplicate", "duplicate"],
+                "rte": ["entailment", "not_entailment"],
+                "sst2": ["negative", "positive"],
+                "boolq": ["false", "true"],
+                "copa": ["false", "true"],
+                "wic": ["false", "true"],
+                "cb": ["entailment", "contradiction", "neutral"],
+                "multirc": ["false", "true"],
+                "imdb": ["negative", "positive"],
+                "yelp": ["terrible", "bad", "middle", "good", "wonderful"]}
+    
     tasknum = len(alltaskfold)
-    dataprefix = "./textclassificationdata/"
+    # dataprefix = "./textclassificationdata/"
+    dataprefix = "./longseqtextclsdata/"
     fewshotnum = 16
     filecopynum = [1,3,4]
     numberreturnseq = [3,12,12]
+    runs = 5
+
     if args.local_rank != -1:
         torch.distributed.barrier()
 
-    for onerun in range(0, runtimes):
+    # for onerun in range(len(task_orders)):
+    for onerun in range(runs):
         logger.info(onerun)
         args.seed = initialseed + onerun * 100
         seed_everything(args)
         logger.info("new seed %s", args.seed)
-        allindex = [i for i in range(tasknum)]
-        random.shuffle(allindex)
-        newtaskname = [alltaskname[i] for i in allindex]
-        print(newtaskname)
-        newtaskfold = [alltaskfold[i] for i in allindex]
-        print(newtaskfold)
-        newtgentasktokens = [allgentasktoken[i] for i in allindex]
-        print(newtgentasktokens)
+
+        # allindex = [i for i in range(tasknum)]
+        # random.shuffle(allindex)
+        # newtaskname = [alltaskname[i] for i in allindex]
+        # print(newtaskname)
+        # newtaskfold = [alltaskfold[i] for i in allindex]
+        # print(newtaskfold)
+        # newtgentasktokens = [allgentasktoken[i] for i in allindex]
+        # print(newtgentasktokens)
+
+        # newtaskname = task_orders[onerun]
+        if len(task_orders) == 1: 
+            newtaskname = task_orders[0]
+        else:
+            assert len(task_orders) == runs
+            newtaskname = task_orders[onerun]
+
+        newtaskfold, newtgentasktokens = [], []  
+        for name in newtaskname:
+            newtaskfold.append(namemap[name]["fold"])
+            newtgentasktokens.append(namemap[name]["token"])
+
+        print("task order: ", newtaskname)
+        print("task fold: ", newtaskfold)
+        print("task tokens: ", newtgentasktokens)
+        
+        # doan nay de xem la doc dataset tu file nao day nay.
         getnewfew = False
         if getnewfew:
             for j in range(len(newtaskfold)):
@@ -388,8 +458,10 @@ if __name__ == "__main__":
                     os.mkdir(dataprefix+onefold+"/"+str(onerun)+"_"+str(args.seed))
                 thispath = dataprefix+onefold+"/"+str(onerun)+"_"+str(args.seed)
                 thislabel = labellist[newtaskname[j]]
+                print("This path: ", thispath)
+                print("This label: ", thislabel)
                 logger.info(thispath)
-                getfewshot(dataprefix+onefold,thispath,thislabel,fewshotnum)
+                getfewshot(dataprefix+onefold, thispath, thislabel, fewshotnum)
 
         globaltokenizer = None
         newfilefolder = "newdata"
@@ -403,11 +475,8 @@ if __name__ == "__main__":
         special_tokens = {"ans_token": answertoken}
         tokenizer.add_tokens(list(special_tokens.values()))
         special_token_ids = {k: tokenizer.convert_tokens_to_ids(v) for k, v in special_tokens.items()}
+        
         tostart = 0
-        # if onerun == 0:
-        #     tostart = 1
-        # else:
-        #     tostart = 0
         for j in range(tostart,len(newtaskname)):
             thistaskname = newtaskname[j]
             thistaskfold = newtaskfold[j]
@@ -473,7 +542,7 @@ if __name__ == "__main__":
                         f.write(str(aa) + "\t" + line)
                 f.close()
 
-                logger.info("generate pseodu samples for previous tasks")
+                logger.info("generate pseudo samples for previous tasks")
                 memnumforeveryclass = 2
                 scalerpre = ShardedGradScaler()
                 #scalerpre = None
@@ -628,6 +697,7 @@ if __name__ == "__main__":
 
     if args.local_rank != -1:
         torch.distributed.destroy_process_group()
+
 
 
 
