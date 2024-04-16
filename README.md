@@ -16,6 +16,8 @@ git clone git@github.com:qcwthu/Lifelong-Fewshot-Language-Learning.git
 cd Lifelong-Fewshot-Language-Learning
 ```
 
+download long sequence dataset [longseqdataset](https://drive.google.com/file/d/1FtuEBxPxjpAbk9B9CVmmQP8K4Hn809kb/view?usp=sharing)
+
 ### 2. Install dependencies
 
 #### 2.1. Create conda environment

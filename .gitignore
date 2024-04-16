@@ -29,6 +29,8 @@ DiffType/T5WithContinual/getfewshotdata_new.py
 DiffType/T5WithContinual/__pycache__
 DiffType/T5WithContinual/t5_pt_ckpt
 lm_adapted_t5model
+Classification/longseqtextclsdata
+*.zip
 
 
 
