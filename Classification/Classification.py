@@ -24,14 +24,14 @@ from model import *
 from dataset import *
 from utils import *
 
-logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                    datefmt = '%m/%d/%Y %H:%M:%S',
-                    level = logging.INFO,
-                    handlers=[
-                        logging.FileHandler("log/short_random.log"),
-                        logging.StreamHandler()
-                    ])
-logger = logging.getLogger(__name__)
+# logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+#                     datefmt = '%m/%d/%Y %H:%M:%S',
+#                     level = logging.INFO,
+#                     handlers=[
+#                         logging.FileHandler("log/short_random.log"),
+#                         logging.StreamHandler()
+#                     ])
+# logger = logging.getLogger(__name__)
 
 def get_dataloader(num_workers,dataset, batch_size, max_len, pad_id, sampler):
     collate_fn = SmartBatchingCollate(
@@ -49,7 +49,7 @@ def get_dataloader(num_workers,dataset, batch_size, max_len, pad_id, sampler):
     )
     return dataloader
 
-def train(args, model, train_dataset,valid_dataset, onerun):
+def train(args, model, train_dataset,valid_dataset, onerun, logger):
     # total step
     step_tot = (len(
         train_dataset) // args.gradient_accumulation_steps // args.batch_size_per_gpu // args.n_gpu) * args.max_epoch
@@ -145,7 +145,7 @@ def train(args, model, train_dataset,valid_dataset, onerun):
         if args.local_rank in [0, -1]:
             # if i >= 256:
             if i >= 5:
-                dooneeval(model,valid_dataloader,args,result_dict,optimizer,scaler,i,onerun)
+                dooneeval(model,valid_dataloader,args,result_dict,optimizer,scaler,i,onerun,logger)
                 model.train()
 
         if args.train_sample:
@@ -156,7 +156,7 @@ def train(args, model, train_dataset,valid_dataset, onerun):
     del model, optimizer, scheduler, scaler, train_dataloader, valid_dataloader
     gc.collect()
 
-def dooneeval(modeltoeval,valid_dataloader,args,result_dict,optimizer,scaler,i,onerun):
+def dooneeval(modeltoeval,valid_dataloader,args,result_dict,optimizer,scaler,i,onerun, logger):
     if isinstance(modeltoeval, torch.nn.parallel.DistributedDataParallel):
         model = modeltoeval.module
     else:
@@ -207,7 +207,7 @@ def dooneeval(modeltoeval,valid_dataloader,args,result_dict,optimizer,scaler,i,o
         }
         torch.save(ckpt, os.path.join(args.tosavepath + "/" + args.taskfold + "/" + str(onerun), "bestckpt"))
 
-def test(args, test_dataset,onerun):
+def test(args, test_dataset,onerun, logger):
 
     test_sampler = SequentialSampler(test_dataset)
     test_dataloader = get_dataloader(args.num_workers, test_dataset, args.test_size_per_gpu, args.max_length,
@@ -283,7 +283,9 @@ if __name__ == "__main__":
                         default=1, help="how many steps to log")
     parser.add_argument("--eval_step", dest="eval_step", type=int,
                         default=100, help="how many steps to eval")
-
+    parser.add_argument("--exp_name", type=str, 
+                        default="t5_small_long", help="experiment name")
+    
     parser.add_argument("--tosavepath", dest="tosavepath", type=str,
                         default="t5_classify_ckpt", help="ckpt dir to save")
     parser.add_argument("--seed", dest="seed", type=int,
@@ -333,6 +335,17 @@ if __name__ == "__main__":
 
     # print args
     print(args)
+
+    # set logger 
+    logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                        datefmt = '%m/%d/%Y %H:%M:%S',
+                        level = logging.INFO,
+                        handlers=[
+                            logging.FileHandler(f"log/{args.exp_name}.log"),
+                            logging.StreamHandler()
+                        ])
+    logger = logging.getLogger(__name__)
+
     # set cuda
     os.environ["CUDA_VISIBLE_DEVICES"] = args.cuda
     if args.local_rank == -1:
@@ -380,10 +393,10 @@ if __name__ == "__main__":
 
     task_orders = [
         ["dbpedia", "yahoo answers", "amazon review", "ag news"],
-        ["amazon review", "yahoo answers", "dbpedia", "ag news"],
-        ["yahoo answers", "amazon review", "dbpedia", "ag news"],
-        ["ag news", "amazon review", "dbpedia", "yahoo answers"],
-        ["yahoo answers", "ag news", "dbpedia", "amazon review"]
+        # ["amazon review", "yahoo answers", "dbpedia", "ag news"],
+        # ["yahoo answers", "amazon review", "dbpedia", "ag news"],
+        # ["ag news", "amazon review", "dbpedia", "yahoo answers"],
+        # ["yahoo answers", "ag news", "dbpedia", "amazon review"]
     ]
 
     labellist = {"ag news": ["world", "sports", "business", "science"],
@@ -686,12 +699,13 @@ if __name__ == "__main__":
 
             logger.info("Finish prepare model and dataset")
             logger.info("Start training")
-            train(args, model, train_dataset, valid_dataset, onerun)
+            train(args, model, train_dataset, valid_dataset, onerun, logger)
             logger.info("Finish training")
             if args.local_rank in [0, -1]:
                 logger.info("Start testing")
                 logger.info("Testing...")
-                test(args, test_dataset, onerun)
+                logger.info(f"This task name: {thistaskname}")
+                test(args, test_dataset, onerun, logger)
                 logger.info("Finish testing!")
 
 
