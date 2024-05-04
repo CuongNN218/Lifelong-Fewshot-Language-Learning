@@ -327,10 +327,16 @@ if __name__ == "__main__":
     parser.add_argument("--cache_path", dest="cache_path", type=str,
                         default="/data/qin/cache/",
                         help="The path of huggingface cache")
+    
     parser.add_argument("--prompt_number", dest="prompt_number", type=int,
                         default=100, help="The number of prompt")
+    
+    parser.add_argument("--num_sample", dest="num_sample", type=int,
+                        default=100, help="The number of sample per class")
+    
     parser.add_argument("--ifckpt_onlymodel", dest="ifckpt_onlymodel", type=int,
                         default=1, help="If ckpt only contains model. Default: True, only contains model")
+    
     args = parser.parse_args()
 
     # print args
@@ -388,16 +394,16 @@ if __name__ == "__main__":
         namemap[name] = {"fold": fold, "token": token}
     
     # task_orders = [["ag news", "amazon review", "dbpedia", "yahoo answers"]]
-    # task_orders = [["boolq", "imdb", "rte", "sst2", "dbpedia", "cb", "copa", "amazon review", 
-    #                 "wic", "yelp", "yahoo answers", "qqp", "ag news", "multirc", "mnli"]]
+    task_orders = [["boolq", "imdb", "rte", "sst2", "dbpedia", "cb", "copa", "amazon review", 
+                    "wic", "yelp", "yahoo answers", "qqp", "ag news", "multirc", "mnli"]]
 
-    task_orders = [
-        ["dbpedia", "yahoo answers", "amazon review", "ag news"],
-        # ["amazon review", "yahoo answers", "dbpedia", "ag news"],
-        # ["yahoo answers", "amazon review", "dbpedia", "ag news"],
-        # ["ag news", "amazon review", "dbpedia", "yahoo answers"],
-        # ["yahoo answers", "ag news", "dbpedia", "amazon review"]
-    ]
+    # task_orders = [
+    #     ["dbpedia", "yahoo answers", "amazon review", "ag news"],
+    #     # ["amazon review", "yahoo answers", "dbpedia", "ag news"],
+    #     # ["yahoo answers", "amazon review", "dbpedia", "ag news"],
+    #     # ["ag news", "amazon review", "dbpedia", "yahoo answers"],
+    #     # ["yahoo answers", "ag news", "dbpedia", "amazon review"]
+    # ]
 
     labellist = {"ag news": ["world", "sports", "business", "science"],
                 "yahoo answers": ["society and culture", "science", "health", "education and reference",
@@ -421,11 +427,11 @@ if __name__ == "__main__":
     
     tasknum = len(alltaskfold)
     # dataprefix = "./textclassificationdata/"
-    dataprefix = "./longseqtextclsdata/"
-    fewshotnum = 16
+    dataprefix = f"./longseqtextclsdata/{args.num_sample}/"
+    fewshotnum = args.num_sample
     filecopynum = [1,3,4]
     numberreturnseq = [3,12,12]
-    runs = 5
+    runs = 1
 
     if args.local_rank != -1:
         torch.distributed.barrier()
@@ -593,7 +599,7 @@ if __name__ == "__main__":
                             else:
                                 sen, target, preds = model._generative_samples(inputs_lm,numberreturnseq[onerun])
                             thisdatanum = len(preds)
-                            logger.info(thisdatanum)
+                            # logger.info(thisdatanum)
                             for ll in range(thisdatanum):
                                 samplelist = preds[ll].split(answertoken)
                                 if len(samplelist) != 2:
@@ -690,6 +696,11 @@ if __name__ == "__main__":
             tokenizer.add_tokens(gentasktoken)
             logger.info('gen token = {} , gen token id = {}'.format(gentasktoken,tokenizer.convert_tokens_to_ids(gentasktoken)))
             globaltokenizer = tokenizer
+            
+            logger.info(f"train file name: {args.train_file_name}")
+            logger.info(f"valid file name: {args.valid_file_name}")
+            logger.info(f"test file name: {args.test_file_name}")
+
             train_dataset = T5SenClassifyDatasetConll(args.train_file_name, args.max_length, tokenizer, newtgentasktokens,
                                                       answertoken,j)
             valid_dataset = T5SenClassifyDatasetConll(args.valid_file_name, args.max_length, tokenizer, newtgentasktokens,
@@ -704,6 +715,7 @@ if __name__ == "__main__":
             if args.local_rank in [0, -1]:
                 logger.info("Start testing")
                 logger.info("Testing...")
+                logger.info(f"Using seed: {args.seed}")
                 logger.info(f"This task name: {thistaskname}")
                 test(args, test_dataset, onerun, logger)
                 logger.info("Finish testing!")
